@@ -1,0 +1,20 @@
+# Data (large files, not version controlled)
+data/
+
+# Checkpoints (generated, not version controlled)
+checkpoints/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Virtual environment
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Wandb
+wandb/
