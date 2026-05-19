@@ -39,7 +39,9 @@ class MaskedAutoencoder(nn.Module):
         self.decoder_norm = nn.LayerNorm(encoder.embed_dim)
         self.to_patch = nn.Linear(encoder.embed_dim, patch_values)
         self.mask_token = nn.Parameter(torch.zeros(1, 1, encoder.embed_dim))
+        self.decoder_pos_embed = nn.Parameter(torch.zeros(1, encoder.num_tokens, encoder.embed_dim))
         nn.init.trunc_normal_(self.mask_token, std=0.02)
+        nn.init.trunc_normal_(self.decoder_pos_embed, std=0.02)
 
     @classmethod
     def from_config(cls, cfg) -> "MaskedAutoencoder":
@@ -59,7 +61,7 @@ class MaskedAutoencoder(nn.Module):
         _, tokens, _ = self.encoder(x_masked, return_tokens=True, return_bypass=True)
         dec_mask = masks.decoder_mask.flatten(1)
         tokens = torch.where(dec_mask.unsqueeze(-1), self.mask_token.expand_as(tokens), tokens)
-        decoded = tokens
+        decoded = tokens + self.decoder_pos_embed[:, : tokens.size(1), :]
         for block in self.decoder:
             decoded = block(decoded)
         decoded = self.decoder_norm(decoded)
