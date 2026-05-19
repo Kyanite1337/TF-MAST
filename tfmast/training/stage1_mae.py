@@ -53,7 +53,7 @@ def train_mae(cfg, loader, *, run_name: str | None = None) -> TrainResult:
             opt.zero_grad(set_to_none=True)
         loss = total / max(steps, 1)
         metrics = {"epoch": epoch, "train_loss": loss, "mae/reconstruction_loss": loss, "lr": opt.param_groups[0]["lr"], "epoch_time": time.time() - start, "gpu_memory_mb": gpu_memory_mb()}
-        print(f"[MAE] epoch {epoch:03d} loss={loss:.6f} lr={metrics['lr']:.3e}", flush=True)
+        print(f"[MAE] epoch {epoch:03d} loss={loss:.6f} lr={metrics['lr']:.3e} time={metrics['epoch_time']:.1f}s", flush=True)
         append_metrics(run_dir, metrics)
         logger.log(metrics, step=epoch)
         payload = {"model": model.state_dict(), "encoder": model.encoder.state_dict(), "metrics": metrics}

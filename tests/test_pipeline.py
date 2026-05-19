@@ -46,7 +46,6 @@ def test_pipeline_prints_stage_progress_for_long_runs(tmp_path, capsys):
             "train.tfc.batch_size": 8,
             "train.finetune.batch_size": 8,
             "train.max_batches": 1,
-            "train.log_every_steps": 1,
             "model.embed_dim": 32,
             "model.depths": [1, 1],
             "model.num_heads": [2, 4],
@@ -61,4 +60,5 @@ def test_pipeline_prints_stage_progress_for_long_runs(tmp_path, capsys):
     assert "[Pipeline] Starting stage: MAE" in output
     assert "[Pipeline] Starting stage: TFC" in output
     assert "[Pipeline] Starting stage: fine-tune" in output
-    assert "step 1/" in output
+    assert "step 1/" not in output
+    assert "time=" in output

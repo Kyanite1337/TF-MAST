@@ -67,7 +67,12 @@ def train_tfc(cfg, loader, *, init_encoder=None, run_name: str | None = None) ->
             opt.zero_grad(set_to_none=True)
         avg = {key: value / max(steps, 1) for key, value in total.items()}
         metrics = {"epoch": epoch, "train_loss": avg["loss"], "tfc/total_loss": avg["loss"], "tfc/L_time": avg["loss_time"], "tfc/L_freq": avg["loss_freq"], "tfc/L_consistency": avg["loss_consistency"], "tfc/embedding_similarity": avg["embedding_similarity"], "lr": opt.param_groups[0]["lr"], "epoch_time": time.time() - start, "gpu_memory_mb": gpu_memory_mb()}
-        print(f"[TFC] epoch {epoch:03d} loss={avg['loss']:.6f} Lt={avg['loss_time']:.4f} Lf={avg['loss_freq']:.4f} Lc={avg['loss_consistency']:.4f}", flush=True)
+        print(
+            f"[TFC] epoch {epoch:03d} loss={avg['loss']:.6f} "
+            f"Lt={avg['loss_time']:.4f} Lf={avg['loss_freq']:.4f} "
+            f"Lc={avg['loss_consistency']:.4f} time={metrics['epoch_time']:.1f}s",
+            flush=True,
+        )
         append_metrics(run_dir, metrics)
         logger.log(metrics, step=epoch)
         payload = {"model": model.state_dict(), "encoder": model.time_encoder.state_dict(), "metrics": metrics}
