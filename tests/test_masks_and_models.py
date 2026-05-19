@@ -5,7 +5,7 @@ from tfmast.config import load_config
 from tfmast.models.heads import build_head
 from tfmast.models.mae import MaskedAutoencoder
 from tfmast.models.swin_emg import SwinEMGEncoder
-from tfmast.models.tfc import TFCModel
+from tfmast.models.tfc import TFCModel, _nt_xent
 from tfmast.training.masks import MaskBank
 
 
@@ -53,6 +53,16 @@ def test_tfc_model_outputs_all_loss_terms():
 
     assert set(out.losses) == {"loss", "loss_time", "loss_freq", "loss_consistency", "embedding_similarity"}
     assert out.losses["loss"].requires_grad
+
+
+def test_nt_xent_accepts_half_precision_embeddings_without_mask_overflow():
+    z1 = torch.randn(4, 32, dtype=torch.float16)
+    z2 = torch.randn(4, 32, dtype=torch.float16)
+
+    loss = _nt_xent(z1, z2, temperature=0.2)
+
+    assert loss.dtype == torch.float32
+    assert torch.isfinite(loss)
 
 
 def test_classifier_heads_forward_for_mlp_and_skip_mamba_when_unavailable():

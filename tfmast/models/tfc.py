@@ -16,9 +16,9 @@ class TFCOutput:
 
 def _nt_xent(z1: torch.Tensor, z2: torch.Tensor, temperature: float) -> torch.Tensor:
     batch = z1.size(0)
-    z = F.normalize(torch.cat([z1, z2], dim=0), dim=-1)
+    z = F.normalize(torch.cat([z1, z2], dim=0).float(), dim=-1)
     sim = z @ z.T / temperature
-    sim = sim.masked_fill(torch.eye(2 * batch, dtype=torch.bool, device=z.device), -1e9)
+    sim = sim.masked_fill(torch.eye(2 * batch, dtype=torch.bool, device=z.device), -torch.finfo(sim.dtype).max)
     labels = torch.cat([torch.arange(batch, 2 * batch), torch.arange(0, batch)]).to(z.device)
     return F.cross_entropy(sim, labels)
 
