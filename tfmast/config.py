@@ -61,6 +61,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "grad_accum_steps": 1,
         "max_batches": None,
         "auto_batch": True,
+        "log_every_steps": 50,
         "num_workers": 8,
         "mae": {"epochs": 300, "batch_size": 1024, "lr": 3e-4, "weight_decay": 0.05},
         "tfc": {"epochs": 200, "batch_size": 768, "lr": 1e-4, "weight_decay": 0.05},

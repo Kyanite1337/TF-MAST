@@ -69,6 +69,7 @@ def train_finetune(cfg, train_loader, test_loader, *, init_encoder=None, head_na
     best_path = run_dir / "best.pt"
     last_path = run_dir / "last.pt"
     max_batches = cfg.train.max_batches
+    log_every = max(0, int(getattr(cfg.train, "log_every_steps", 0) or 0))
     for epoch in range(1, int(cfg.train.finetune.epochs) + 1):
         start = time.time()
         encoder.train()
@@ -91,6 +92,8 @@ def train_finetune(cfg, train_loader, test_loader, *, init_encoder=None, head_na
                 opt.zero_grad(set_to_none=True)
             total += float(loss.detach().cpu())
             steps += 1
+            if log_every and (steps == 1 or steps % log_every == 0):
+                print(f"[FT] epoch {epoch:03d} step {steps}/{len(train_loader)} loss={float(loss.detach().cpu()):.6f}", flush=True)
             if max_batches and steps >= int(max_batches):
                 break
         if steps % accum != 0:
@@ -100,7 +103,7 @@ def train_finetune(cfg, train_loader, test_loader, *, init_encoder=None, head_na
         eval_metrics = evaluate(encoder, head, test_loader, device)
         train_loss = total / max(steps, 1)
         metrics = {"epoch": epoch, "train_loss": train_loss, "finetune/train_loss": train_loss, "finetune/accuracy": eval_metrics["accuracy"], "finetune/macro_f1": eval_metrics["macro_f1"], "lr": opt.param_groups[0]["lr"], "epoch_time": time.time() - start, "gpu_memory_mb": gpu_memory_mb()}
-        print(f"[FT] epoch {epoch:03d} loss={train_loss:.6f} acc={eval_metrics['accuracy']:.4f} macro_f1={eval_metrics['macro_f1']:.4f}")
+        print(f"[FT] epoch {epoch:03d} loss={train_loss:.6f} acc={eval_metrics['accuracy']:.4f} macro_f1={eval_metrics['macro_f1']:.4f}", flush=True)
         append_metrics(run_dir, metrics | {"confusion_matrix": eval_metrics["confusion_matrix"]})
         logger.log(metrics, step=epoch)
         payload = {"encoder": encoder.state_dict(), "head": head.state_dict(), "metrics": metrics, "confusion_matrix": eval_metrics["confusion_matrix"]}

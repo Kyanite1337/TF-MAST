@@ -69,12 +69,15 @@ def _load_records(cfg: Any, limit_subjects: int | None = None) -> list[RawRecord
     if limit_subjects is not None:
         subjects = subjects[:limit_subjects]
     records: list[RawRecord] = []
+    expected = len(subjects) * len(cfg.data.exercises)
+    print(f"[Data] Loading NinaPro DB5 from {root} ({expected} files)", flush=True)
     for subject in subjects:
         for exercise in cfg.data.exercises:
             path = _expected_path(root, int(subject), str(exercise))
             if not path.exists():
                 raise FileNotFoundError(f"Missing NinaPro DB5 file: {path}")
             records.append(load_one_mat(path, subject=int(subject), exercise=str(exercise)))
+            print(f"[Data] loaded {len(records):02d}/{expected}: {path}", flush=True)
     return records
 
 
@@ -171,7 +174,9 @@ def _hash_config(cfg: Any) -> str:
 
 def build_preprocessed_dataset(cfg: Any, *, limit_subjects: int | None = None) -> PreprocessedDataset:
     records = _load_records(cfg, limit_subjects=limit_subjects)
+    print("[Data] Filtering and windowing recordings", flush=True)
     x, meta = _window_records(records, cfg)
+    print(f"[Data] Windowed samples: {x.shape[0]} shape={x.shape[1:]}", flush=True)
     train_mask = np.isin(meta["repetition"], np.asarray(cfg.data.train_reps))
     test_mask = np.isin(meta["repetition"], np.asarray(cfg.data.test_reps))
     if not train_mask.any() or not test_mask.any():
@@ -188,6 +193,10 @@ def build_preprocessed_dataset(cfg: Any, *, limit_subjects: int | None = None) -
 
     y_train = np.asarray([label_map[int(v)] for v in meta["y"][train_mask]], dtype=np.int64)
     y_test = np.asarray([label_map[int(v)] for v in meta["y"][test_mask]], dtype=np.int64)
+    print(
+        f"[Data] Split complete: train={x_train.shape[0]} test={x_test.shape[0]} classes={53 if cfg.data.class_mode == '53_with_rest' else 52}",
+        flush=True,
+    )
     return PreprocessedDataset(
         x_train=x_train,
         y_train=y_train,

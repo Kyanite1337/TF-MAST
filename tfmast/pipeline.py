@@ -16,7 +16,9 @@ from tfmast.training.stage3_finetune import train_finetune
 
 
 def _loaders_for_pipeline(cfg: Any, *, synthetic: bool, limit_subjects: int | None):
+    print("[Pipeline] Preparing data", flush=True)
     if synthetic:
+        print("[Pipeline] Using synthetic DB5-like data", flush=True)
         return build_synthetic_loaders(batch_size=8, num_classes=53 if cfg.data.class_mode == "53_with_rest" else 52)
     dataset = build_preprocessed_dataset(cfg, limit_subjects=limit_subjects)
     return build_loaders(dataset, cfg)
@@ -34,8 +36,13 @@ def run_pipeline(
     cfg = load_config(config_path, overrides=overrides or {})
     loaders = _loaders_for_pipeline(cfg, synthetic=synthetic, limit_subjects=limit_subjects)
 
+    print("[Pipeline] Starting stage: MAE", flush=True)
     mae = train_mae(cfg, loaders.mae, run_name=f"{experiment}_mae")
+    print(f"[Pipeline] MAE best checkpoint: {mae.best_checkpoint}", flush=True)
+    print("[Pipeline] Starting stage: TFC", flush=True)
     tfc = train_tfc(cfg, loaders.tfc, init_encoder=mae.best_checkpoint, run_name=f"{experiment}_tfc")
+    print(f"[Pipeline] TFC best checkpoint: {tfc.best_checkpoint}", flush=True)
+    print("[Pipeline] Starting stage: fine-tune", flush=True)
     finetune = train_finetune(
         cfg,
         loaders.train,

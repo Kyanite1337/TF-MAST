@@ -32,6 +32,7 @@ def train_tfc(cfg, loader, *, init_encoder=None, run_name: str | None = None) ->
     best_path = run_dir / "best.pt"
     last_path = run_dir / "last.pt"
     max_batches = cfg.train.max_batches
+    log_every = max(0, int(getattr(cfg.train, "log_every_steps", 0) or 0))
     for epoch in range(1, int(cfg.train.tfc.epochs) + 1):
         start = time.time()
         total = {"loss": 0.0, "loss_time": 0.0, "loss_freq": 0.0, "loss_consistency": 0.0, "embedding_similarity": 0.0}
@@ -52,6 +53,12 @@ def train_tfc(cfg, loader, *, init_encoder=None, run_name: str | None = None) ->
             for key in total:
                 total[key] += float(out.losses[key].detach().cpu())
             steps += 1
+            if log_every and (steps == 1 or steps % log_every == 0):
+                print(
+                    f"[TFC] epoch {epoch:03d} step {steps}/{len(loader)} "
+                    f"loss={float(out.losses['loss'].detach().cpu()):.6f}",
+                    flush=True,
+                )
             if max_batches and steps >= int(max_batches):
                 break
         if steps % accum != 0:
@@ -60,7 +67,7 @@ def train_tfc(cfg, loader, *, init_encoder=None, run_name: str | None = None) ->
             opt.zero_grad(set_to_none=True)
         avg = {key: value / max(steps, 1) for key, value in total.items()}
         metrics = {"epoch": epoch, "train_loss": avg["loss"], "tfc/total_loss": avg["loss"], "tfc/L_time": avg["loss_time"], "tfc/L_freq": avg["loss_freq"], "tfc/L_consistency": avg["loss_consistency"], "tfc/embedding_similarity": avg["embedding_similarity"], "lr": opt.param_groups[0]["lr"], "epoch_time": time.time() - start, "gpu_memory_mb": gpu_memory_mb()}
-        print(f"[TFC] epoch {epoch:03d} loss={avg['loss']:.6f} Lt={avg['loss_time']:.4f} Lf={avg['loss_freq']:.4f} Lc={avg['loss_consistency']:.4f}")
+        print(f"[TFC] epoch {epoch:03d} loss={avg['loss']:.6f} Lt={avg['loss_time']:.4f} Lf={avg['loss_freq']:.4f} Lc={avg['loss_consistency']:.4f}", flush=True)
         append_metrics(run_dir, metrics)
         logger.log(metrics, step=epoch)
         payload = {"model": model.state_dict(), "encoder": model.time_encoder.state_dict(), "metrics": metrics}

@@ -23,6 +23,7 @@ def train_mae(cfg, loader, *, run_name: str | None = None) -> TrainResult:
     best_path = run_dir / "best.pt"
     last_path = run_dir / "last.pt"
     max_batches = cfg.train.max_batches
+    log_every = max(0, int(getattr(cfg.train, "log_every_steps", 0) or 0))
     for epoch in range(1, int(cfg.train.mae.epochs) + 1):
         start = time.time()
         model.train()
@@ -42,6 +43,8 @@ def train_mae(cfg, loader, *, run_name: str | None = None) -> TrainResult:
                 opt.zero_grad(set_to_none=True)
             total += float(out.loss.detach().cpu())
             steps += 1
+            if log_every and (steps == 1 or steps % log_every == 0):
+                print(f"[MAE] epoch {epoch:03d} step {steps}/{len(loader)} loss={float(out.loss.detach().cpu()):.6f}", flush=True)
             if max_batches and steps >= int(max_batches):
                 break
         if steps % accum != 0:
@@ -50,7 +53,7 @@ def train_mae(cfg, loader, *, run_name: str | None = None) -> TrainResult:
             opt.zero_grad(set_to_none=True)
         loss = total / max(steps, 1)
         metrics = {"epoch": epoch, "train_loss": loss, "mae/reconstruction_loss": loss, "lr": opt.param_groups[0]["lr"], "epoch_time": time.time() - start, "gpu_memory_mb": gpu_memory_mb()}
-        print(f"[MAE] epoch {epoch:03d} loss={loss:.6f} lr={metrics['lr']:.3e}")
+        print(f"[MAE] epoch {epoch:03d} loss={loss:.6f} lr={metrics['lr']:.3e}", flush=True)
         append_metrics(run_dir, metrics)
         logger.log(metrics, step=epoch)
         payload = {"model": model.state_dict(), "encoder": model.encoder.state_dict(), "metrics": metrics}
