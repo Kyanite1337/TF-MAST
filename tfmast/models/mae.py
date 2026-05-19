@@ -24,10 +24,19 @@ class MaskedAutoencoder(nn.Module):
         self.mask_bank = mask_bank
         self.patch_size = encoder.patch_size
         patch_values = self.patch_size[0] * self.patch_size[1]
-        layers: list[nn.Module] = []
-        for _ in range(decoder_depth):
-            layers.extend([nn.LayerNorm(encoder.embed_dim), nn.Linear(encoder.embed_dim, encoder.embed_dim), nn.GELU()])
-        self.decoder = nn.Sequential(*layers)
+        self.decoder = nn.ModuleList([
+            nn.TransformerEncoderLayer(
+                d_model=encoder.embed_dim,
+                nhead=4 if encoder.embed_dim % 4 == 0 else 1,
+                dim_feedforward=encoder.embed_dim * 4,
+                dropout=0.1,
+                activation="gelu",
+                batch_first=True,
+                norm_first=True,
+            )
+            for _ in range(decoder_depth)
+        ])
+        self.decoder_norm = nn.LayerNorm(encoder.embed_dim)
         self.to_patch = nn.Linear(encoder.embed_dim, patch_values)
         self.mask_token = nn.Parameter(torch.zeros(1, 1, encoder.embed_dim))
         nn.init.trunc_normal_(self.mask_token, std=0.02)
@@ -50,7 +59,10 @@ class MaskedAutoencoder(nn.Module):
         _, tokens, _ = self.encoder(x_masked, return_tokens=True, return_bypass=True)
         dec_mask = masks.decoder_mask.flatten(1)
         tokens = torch.where(dec_mask.unsqueeze(-1), self.mask_token.expand_as(tokens), tokens)
-        decoded = self.decoder(tokens)
+        decoded = tokens
+        for block in self.decoder:
+            decoded = block(decoded)
+        decoded = self.decoder_norm(decoded)
         patch_values = self.to_patch(decoded)
         recon = self._unpatchify(patch_values, x.shape)
         loss_mask = expand_patch_mask(masks.decoder_mask, x.size(-1), self.patch_size)

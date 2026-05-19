@@ -44,6 +44,22 @@ def test_mae_forward_reconstructs_signal_and_returns_masked_loss():
     assert out.loss.requires_grad
 
 
+def test_mae_masked_reconstruction_depends_on_visible_context():
+    cfg = load_config(overrides={"model.embed_dim": 32, "model.depths": [1, 1], "model.num_heads": [2, 4]})
+    model = MaskedAutoencoder.from_config(cfg)
+
+    encoder_mask = torch.zeros(2, 16, 10, dtype=torch.bool)
+    decoder_mask = torch.zeros(2, 16, 10, dtype=torch.bool)
+    decoder_mask[:, 0, 0] = True
+    model.mask_bank = lambda x: type("MaskBatchLike", (), {"encoder_mask": encoder_mask.to(x.device), "decoder_mask": decoder_mask.to(x.device)})()
+
+    x = torch.zeros(2, 16, 40)
+    x[1, :, 4:] = 1.0
+    out = model(x)
+
+    assert not torch.allclose(out.reconstruction[0, 0, :4], out.reconstruction[1, 0, :4])
+
+
 def test_tfc_model_outputs_all_loss_terms():
     cfg = load_config(overrides={"model.embed_dim": 32, "model.depths": [1, 1], "model.num_heads": [2, 4]})
     model = TFCModel.from_config(cfg)
