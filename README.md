@@ -46,6 +46,7 @@ bash scripts/smoke_server.sh
 ```bash
 python -m tfmast.env_check
 python -m tfmast.preprocess --config configs/db5.yaml
+python -m tfmast.pipeline --config configs/db5.yaml --experiment db5_full --head mamba wandb.mode=offline
 python -m tfmast.train --config configs/db5.yaml stage=mae experiment=mae_swin
 python -m tfmast.train --config configs/db5.yaml stage=tfc init=runs/<mae_run>/best.pt
 python -m tfmast.train --config configs/db5.yaml stage=finetune init=runs/<tfc_run>/best.pt head=mamba
