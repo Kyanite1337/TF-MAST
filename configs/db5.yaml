@@ -1,0 +1,17 @@
+paths:
+  data_root: data/ninapro_db5
+  cache_dir: data/cache
+  runs_dir: runs
+  checkpoints_dir: checkpoints
+data:
+  root: data/ninapro_db5
+  subjects: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+  exercises: [E1, E2, E3]
+  class_mode: 53_with_rest
+  train_reps: [1, 3, 4, 6]
+  test_reps: [2, 5]
+  window_ms: 200
+  stride_ms: 100
+wandb:
+  mode: disabled
+  project: tfmast-ninapro-db5

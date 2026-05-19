@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tfmast"
+version = "0.1.0"
+description = "Staged MAE + TFC training for NinaPro DB5 sEMG gesture recognition"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.24",
+  "scipy>=1.10",
+  "scikit-learn>=1.3",
+  "torch>=2.1",
+  "PyYAML>=6.0",
+  "wandb>=0.17",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+mamba = ["mamba-ssm>=2.2"]
+
+[tool.setuptools.packages.find]
+include = ["tfmast*"]

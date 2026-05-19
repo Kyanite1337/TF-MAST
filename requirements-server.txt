@@ -1,0 +1,9 @@
+numpy>=1.24
+scipy>=1.10
+scikit-learn>=1.3
+PyYAML>=6.0
+wandb>=0.17
+pytest>=8.0
+# Install a CUDA-matched PyTorch wheel before this file when needed.
+# Official Mamba head support:
+mamba-ssm>=2.2

@@ -1,0 +1,10 @@
+__pycache__/
+.pytest_cache/
+*.pyc
+.venv/
+venv/
+runs/
+checkpoints/
+data/cache/
+data/ninapro_db5/
+wandb/
