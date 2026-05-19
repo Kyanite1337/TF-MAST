@@ -37,9 +37,26 @@ class FineTuneDataset(Dataset):
 @dataclass
 class LoaderBundle:
     mae: DataLoader
+    mae_val: DataLoader
     tfc: DataLoader
+    tfc_val: DataLoader
     train: DataLoader
+    val: DataLoader
     test: DataLoader
+
+
+def _split_train_val(x: np.ndarray, y: np.ndarray | None, fraction: float, seed: int):
+    n = len(x)
+    val_n = max(1, int(round(n * fraction))) if n > 1 else 1
+    val_n = min(val_n, n - 1) if n > 1 else 1
+    rng = np.random.default_rng(seed)
+    idx = rng.permutation(n)
+    val_idx, train_idx = idx[:val_n], idx[val_n:]
+    if len(train_idx) == 0:
+        train_idx = val_idx
+    if y is None:
+        return x[train_idx], None, x[val_idx], None
+    return x[train_idx], y[train_idx], x[val_idx], y[val_idx]
 
 
 def build_loaders(dataset, cfg) -> LoaderBundle:
@@ -47,10 +64,15 @@ def build_loaders(dataset, cfg) -> LoaderBundle:
     common = {"num_workers": workers, "pin_memory": workers > 0}
     if workers > 0:
         common["persistent_workers"] = True
+    x_ssl_train, _, x_ssl_val, _ = _split_train_val(dataset.x_train, None, float(cfg.train.val_fraction), int(cfg.train.seed))
+    x_ft_train, y_ft_train, x_ft_val, y_ft_val = _split_train_val(dataset.x_train, dataset.y_train, float(cfg.train.val_fraction), int(cfg.train.seed))
     return LoaderBundle(
-        mae=DataLoader(MAEDataset(dataset.x_train), batch_size=int(cfg.train.mae.batch_size), shuffle=True, drop_last=True, **common),
-        tfc=DataLoader(TFCDataset(dataset.x_train), batch_size=int(cfg.train.tfc.batch_size), shuffle=True, drop_last=True, **common),
-        train=DataLoader(FineTuneDataset(dataset.x_train, dataset.y_train), batch_size=int(cfg.train.finetune.batch_size), shuffle=True, **common),
+        mae=DataLoader(MAEDataset(x_ssl_train), batch_size=int(cfg.train.mae.batch_size), shuffle=True, drop_last=True, **common),
+        mae_val=DataLoader(MAEDataset(x_ssl_val), batch_size=int(cfg.train.mae.batch_size), shuffle=False, **common),
+        tfc=DataLoader(TFCDataset(x_ssl_train), batch_size=int(cfg.train.tfc.batch_size), shuffle=True, drop_last=True, **common),
+        tfc_val=DataLoader(TFCDataset(x_ssl_val), batch_size=int(cfg.train.tfc.batch_size), shuffle=False, **common),
+        train=DataLoader(FineTuneDataset(x_ft_train, y_ft_train), batch_size=int(cfg.train.finetune.batch_size), shuffle=True, **common),
+        val=DataLoader(FineTuneDataset(x_ft_val, y_ft_val), batch_size=int(cfg.train.finetune.batch_size), shuffle=False, **common),
         test=DataLoader(FineTuneDataset(dataset.x_test, dataset.y_test), batch_size=int(cfg.train.finetune.batch_size), shuffle=False, **common),
     )
 
@@ -63,7 +85,10 @@ def build_synthetic_loaders(num_train: int = 64, num_test: int = 32, batch_size:
     y_test = np.arange(num_test, dtype=np.int64) % num_classes
     return LoaderBundle(
         mae=DataLoader(MAEDataset(x_train), batch_size=batch_size, shuffle=True, drop_last=True),
+        mae_val=DataLoader(MAEDataset(x_test), batch_size=batch_size, shuffle=False),
         tfc=DataLoader(TFCDataset(x_train), batch_size=batch_size, shuffle=True, drop_last=True),
+        tfc_val=DataLoader(TFCDataset(x_test), batch_size=batch_size, shuffle=False),
         train=DataLoader(FineTuneDataset(x_train, y_train), batch_size=batch_size, shuffle=True),
+        val=DataLoader(FineTuneDataset(x_test, y_test), batch_size=batch_size, shuffle=False),
         test=DataLoader(FineTuneDataset(x_test, y_test), batch_size=batch_size, shuffle=False),
     )

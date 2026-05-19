@@ -6,7 +6,7 @@ import torch
 from torch.optim import AdamW
 
 from tfmast.models.tfc import TFCModel
-from tfmast.training.common import TrainResult, append_metrics, gpu_memory_mb, make_run_dir, resolve_device, save_checkpoint, set_seed
+from tfmast.training.common import EarlyStopper, TrainResult, append_metrics, gpu_memory_mb, make_run_dir, resolve_device, save_checkpoint, set_seed
 from tfmast.utils.wandb import WandbLogger
 
 
@@ -18,7 +18,21 @@ def _load_time_encoder(model: TFCModel, path) -> None:
     model.time_encoder.load_state_dict(encoder_state, strict=False)
 
 
-def train_tfc(cfg, loader, *, init_encoder=None, run_name: str | None = None) -> TrainResult:
+@torch.no_grad()
+def _evaluate_tfc(model: TFCModel, loader, device: torch.device, max_batches=None) -> float:
+    model.eval()
+    total = 0.0
+    steps = 0
+    for batch in loader:
+        out = model(batch.to(device))
+        total += float(out.losses["loss"].detach().cpu())
+        steps += 1
+        if max_batches and steps >= int(max_batches):
+            break
+    return total / max(steps, 1)
+
+
+def train_tfc(cfg, loader, val_loader=None, *, init_encoder=None, run_name: str | None = None) -> TrainResult:
     set_seed(int(cfg.train.seed))
     device = resolve_device(cfg)
     run_dir = make_run_dir(cfg, "tfc", run_name)
@@ -28,7 +42,7 @@ def train_tfc(cfg, loader, *, init_encoder=None, run_name: str | None = None) ->
     model = model.to(device)
     opt = AdamW(model.parameters(), lr=float(cfg.train.tfc.lr), weight_decay=float(cfg.train.tfc.weight_decay))
     scaler = torch.amp.GradScaler("cuda", enabled=bool(cfg.train.amp and device.type == "cuda"))
-    best = float("inf")
+    stopper = EarlyStopper(mode="min", patience=int(cfg.train.tfc.early_stop_patience), min_delta=float(cfg.train.tfc.early_stop_min_delta))
     best_path = run_dir / "best.pt"
     last_path = run_dir / "last.pt"
     max_batches = cfg.train.max_batches
@@ -66,19 +80,19 @@ def train_tfc(cfg, loader, *, init_encoder=None, run_name: str | None = None) ->
             scaler.update()
             opt.zero_grad(set_to_none=True)
         avg = {key: value / max(steps, 1) for key, value in total.items()}
-        metrics = {"epoch": epoch, "train_loss": avg["loss"], "tfc/total_loss": avg["loss"], "tfc/L_time": avg["loss_time"], "tfc/L_freq": avg["loss_freq"], "tfc/L_consistency": avg["loss_consistency"], "tfc/embedding_similarity": avg["embedding_similarity"], "lr": opt.param_groups[0]["lr"], "epoch_time": time.time() - start, "gpu_memory_mb": gpu_memory_mb()}
-        print(
-            f"[TFC] epoch {epoch:03d} loss={avg['loss']:.6f} "
-            f"Lt={avg['loss_time']:.4f} Lf={avg['loss_freq']:.4f} "
-            f"Lc={avg['loss_consistency']:.4f} time={metrics['epoch_time']:.1f}s",
-            flush=True,
-        )
+        val_loss = _evaluate_tfc(model, val_loader or loader, device, max_batches=max_batches)
+        metrics = {"epoch": epoch, "train_loss": avg["loss"], "val_loss": val_loss, "tfc/total_loss": avg["loss"], "tfc/val_loss": val_loss, "tfc/L_time": avg["loss_time"], "tfc/L_freq": avg["loss_freq"], "tfc/L_consistency": avg["loss_consistency"], "tfc/embedding_similarity": avg["embedding_similarity"], "lr": opt.param_groups[0]["lr"], "epoch_time": time.time() - start, "gpu_memory_mb": gpu_memory_mb()}
+        print(f"TFC Epoch {epoch:3d} | Train: {avg['loss']:.4f} | Val: {val_loss:.4f} | Time: {metrics['epoch_time']:.1f}s", flush=True)
         append_metrics(run_dir, metrics)
         logger.log(metrics, step=epoch)
         payload = {"model": model.state_dict(), "encoder": model.time_encoder.state_dict(), "metrics": metrics}
         save_checkpoint(last_path, **payload)
-        if avg["loss"] < best:
-            best = avg["loss"]
+        decision = stopper.update(val_loss)
+        if decision.improved:
             save_checkpoint(best_path, **payload)
+            print(f"  └── Saved best TFC (loss: {val_loss:.4f})", flush=True)
+        if decision.should_stop:
+            print("  └── TFC Early stopping triggered.", flush=True)
+            break
     logger.finish()
-    return TrainResult(run_dir=run_dir, best_checkpoint=best_path, last_checkpoint=last_path, best_metrics={"loss": best})
+    return TrainResult(run_dir=run_dir, best_checkpoint=best_path, last_checkpoint=last_path, best_metrics={"loss": stopper.best})

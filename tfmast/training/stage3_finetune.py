@@ -10,7 +10,7 @@ from torch.optim import AdamW
 
 from tfmast.models.heads import build_head
 from tfmast.models.swin_emg import SwinEMGEncoder
-from tfmast.training.common import TrainResult, append_metrics, gpu_memory_mb, make_run_dir, resolve_device, save_checkpoint, set_seed
+from tfmast.training.common import EarlyStopper, TrainResult, append_metrics, gpu_memory_mb, make_run_dir, resolve_device, save_checkpoint, set_seed
 from tfmast.utils.wandb import WandbLogger
 
 
@@ -23,14 +23,19 @@ def _load_encoder(encoder: SwinEMGEncoder, path) -> None:
 
 
 @torch.no_grad()
-def evaluate(encoder, head, loader, device):
+def evaluate(encoder, head, loader, device, criterion=None):
     encoder.eval()
     head.eval()
     preds, labels = [], []
+    total_loss = 0.0
+    steps = 0
     for x, y in loader:
-        x = x.to(device)
+        x, y_device = x.to(device), y.to(device)
         pooled, tokens, bypass = encoder(x, return_tokens=True, return_bypass=True)
         logits = head(tokens=tokens, pooled=pooled, bypass=bypass)
+        if criterion is not None:
+            total_loss += float(criterion(logits, y_device).detach().cpu())
+            steps += 1
         preds.append(logits.argmax(dim=-1).cpu())
         labels.append(y.cpu())
     y_true = torch.cat(labels).numpy()
@@ -38,11 +43,12 @@ def evaluate(encoder, head, loader, device):
     return {
         "accuracy": float(accuracy_score(y_true, y_pred)),
         "macro_f1": float(f1_score(y_true, y_pred, average="macro", zero_division=0)),
+        "loss": total_loss / max(steps, 1) if criterion is not None else 0.0,
         "confusion_matrix": confusion_matrix(y_true, y_pred).astype(int).tolist(),
     }
 
 
-def train_finetune(cfg, train_loader, test_loader, *, init_encoder=None, head_name: str | None = None, run_name: str | None = None) -> TrainResult:
+def train_finetune(cfg, train_loader, val_loader, test_loader=None, *, init_encoder=None, head_name: str | None = None, run_name: str | None = None) -> TrainResult:
     set_seed(int(cfg.train.seed))
     device = resolve_device(cfg)
     run_dir = make_run_dir(cfg, "finetune", run_name)
@@ -64,7 +70,7 @@ def train_finetune(cfg, train_loader, test_loader, *, init_encoder=None, head_na
     opt = AdamW(list(encoder.parameters()) + list(head.parameters()), lr=float(cfg.train.finetune.lr), weight_decay=float(cfg.train.finetune.weight_decay))
     criterion = nn.CrossEntropyLoss(label_smoothing=float(cfg.train.finetune.label_smoothing))
     scaler = torch.amp.GradScaler("cuda", enabled=bool(cfg.train.amp and device.type == "cuda"))
-    best = -1.0
+    stopper = EarlyStopper(mode="min", patience=int(cfg.train.finetune.early_stop_patience), min_delta=float(cfg.train.finetune.early_stop_min_delta))
     best_metrics = {}
     best_path = run_dir / "best.pt"
     last_path = run_dir / "last.pt"
@@ -100,22 +106,22 @@ def train_finetune(cfg, train_loader, test_loader, *, init_encoder=None, head_na
             scaler.step(opt)
             scaler.update()
             opt.zero_grad(set_to_none=True)
-        eval_metrics = evaluate(encoder, head, test_loader, device)
+        eval_metrics = evaluate(encoder, head, val_loader, device, criterion=criterion)
         train_loss = total / max(steps, 1)
-        metrics = {"epoch": epoch, "train_loss": train_loss, "finetune/train_loss": train_loss, "finetune/accuracy": eval_metrics["accuracy"], "finetune/macro_f1": eval_metrics["macro_f1"], "lr": opt.param_groups[0]["lr"], "epoch_time": time.time() - start, "gpu_memory_mb": gpu_memory_mb()}
-        print(
-            f"[FT] epoch {epoch:03d} loss={train_loss:.6f} "
-            f"acc={eval_metrics['accuracy']:.4f} macro_f1={eval_metrics['macro_f1']:.4f} "
-            f"time={metrics['epoch_time']:.1f}s",
-            flush=True,
-        )
+        val_loss = eval_metrics["loss"]
+        metrics = {"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss, "finetune/train_loss": train_loss, "finetune/val_loss": val_loss, "finetune/accuracy": eval_metrics["accuracy"], "finetune/macro_f1": eval_metrics["macro_f1"], "lr": opt.param_groups[0]["lr"], "epoch_time": time.time() - start, "gpu_memory_mb": gpu_memory_mb()}
+        print(f"FT Epoch {epoch:3d} | Train: {train_loss:.4f} | Val: {val_loss:.4f} | Acc: {eval_metrics['accuracy']:.4f} | F1: {eval_metrics['macro_f1']:.4f} | Time: {metrics['epoch_time']:.1f}s", flush=True)
         append_metrics(run_dir, metrics | {"confusion_matrix": eval_metrics["confusion_matrix"]})
         logger.log(metrics, step=epoch)
         payload = {"encoder": encoder.state_dict(), "head": head.state_dict(), "metrics": metrics, "confusion_matrix": eval_metrics["confusion_matrix"]}
         save_checkpoint(last_path, **payload)
-        if eval_metrics["macro_f1"] > best:
-            best = eval_metrics["macro_f1"]
-            best_metrics = {"accuracy": eval_metrics["accuracy"], "macro_f1": eval_metrics["macro_f1"]}
+        decision = stopper.update(val_loss)
+        if decision.improved:
+            best_metrics = {"loss": val_loss, "accuracy": eval_metrics["accuracy"], "macro_f1": eval_metrics["macro_f1"]}
             save_checkpoint(best_path, **payload)
+            print(f"  └── Saved best Classifier (loss: {val_loss:.4f})", flush=True)
+        if decision.should_stop:
+            print("  └── Classifier Early stopping triggered.", flush=True)
+            break
     logger.finish()
     return TrainResult(run_dir=run_dir, best_checkpoint=best_path, last_checkpoint=last_path, best_metrics=best_metrics)

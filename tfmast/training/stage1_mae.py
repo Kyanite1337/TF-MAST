@@ -7,11 +7,25 @@ import torch
 from torch.optim import AdamW
 
 from tfmast.models.mae import MaskedAutoencoder
-from tfmast.training.common import TrainResult, append_metrics, gpu_memory_mb, make_run_dir, resolve_device, save_checkpoint, set_seed
+from tfmast.training.common import EarlyStopper, TrainResult, append_metrics, gpu_memory_mb, make_run_dir, resolve_device, save_checkpoint, set_seed
 from tfmast.utils.wandb import WandbLogger
 
 
-def train_mae(cfg, loader, *, run_name: str | None = None) -> TrainResult:
+@torch.no_grad()
+def _evaluate_mae(model: MaskedAutoencoder, loader, device: torch.device, max_batches=None) -> float:
+    model.eval()
+    total = 0.0
+    steps = 0
+    for batch in loader:
+        out = model(batch.to(device))
+        total += float(out.loss.detach().cpu())
+        steps += 1
+        if max_batches and steps >= int(max_batches):
+            break
+    return total / max(steps, 1)
+
+
+def train_mae(cfg, loader, val_loader=None, *, run_name: str | None = None) -> TrainResult:
     set_seed(int(cfg.train.seed))
     device = resolve_device(cfg)
     run_dir = make_run_dir(cfg, "mae", run_name)
@@ -19,7 +33,7 @@ def train_mae(cfg, loader, *, run_name: str | None = None) -> TrainResult:
     model = MaskedAutoencoder.from_config(cfg).to(device)
     opt = AdamW(model.parameters(), lr=float(cfg.train.mae.lr), weight_decay=float(cfg.train.mae.weight_decay))
     scaler = torch.amp.GradScaler("cuda", enabled=bool(cfg.train.amp and device.type == "cuda"))
-    best = float("inf")
+    stopper = EarlyStopper(mode="min", patience=int(cfg.train.mae.early_stop_patience), min_delta=float(cfg.train.mae.early_stop_min_delta))
     best_path = run_dir / "best.pt"
     last_path = run_dir / "last.pt"
     max_batches = cfg.train.max_batches
@@ -51,15 +65,20 @@ def train_mae(cfg, loader, *, run_name: str | None = None) -> TrainResult:
             scaler.step(opt)
             scaler.update()
             opt.zero_grad(set_to_none=True)
-        loss = total / max(steps, 1)
-        metrics = {"epoch": epoch, "train_loss": loss, "mae/reconstruction_loss": loss, "lr": opt.param_groups[0]["lr"], "epoch_time": time.time() - start, "gpu_memory_mb": gpu_memory_mb()}
-        print(f"[MAE] epoch {epoch:03d} loss={loss:.6f} lr={metrics['lr']:.3e} time={metrics['epoch_time']:.1f}s", flush=True)
+        train_loss = total / max(steps, 1)
+        val_loss = _evaluate_mae(model, val_loader or loader, device, max_batches=max_batches)
+        metrics = {"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss, "mae/reconstruction_loss": train_loss, "mae/val_loss": val_loss, "lr": opt.param_groups[0]["lr"], "epoch_time": time.time() - start, "gpu_memory_mb": gpu_memory_mb()}
+        print(f"MAE Epoch {epoch:3d} | Train: {train_loss:.4f} | Val: {val_loss:.4f} | Time: {metrics['epoch_time']:.1f}s", flush=True)
         append_metrics(run_dir, metrics)
         logger.log(metrics, step=epoch)
         payload = {"model": model.state_dict(), "encoder": model.encoder.state_dict(), "metrics": metrics}
         save_checkpoint(last_path, **payload)
-        if loss < best:
-            best = loss
+        decision = stopper.update(val_loss)
+        if decision.improved:
             save_checkpoint(best_path, **payload)
+            print(f"  └── Saved best MAE (loss: {val_loss:.4f})", flush=True)
+        if decision.should_stop:
+            print("  └── MAE Early stopping triggered.", flush=True)
+            break
     logger.finish()
-    return TrainResult(run_dir=run_dir, best_checkpoint=best_path, last_checkpoint=last_path, best_metrics={"loss": best})
+    return TrainResult(run_dir=run_dir, best_checkpoint=best_path, last_checkpoint=last_path, best_metrics={"loss": stopper.best})

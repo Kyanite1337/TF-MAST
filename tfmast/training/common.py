@@ -21,6 +21,32 @@ class TrainResult:
     best_metrics: dict[str, float]
 
 
+@dataclass
+class EarlyStopDecision:
+    improved: bool
+    should_stop: bool
+
+
+class EarlyStopper:
+    def __init__(self, *, mode: str = "min", patience: int = 30, min_delta: float = 0.0):
+        if mode not in {"min", "max"}:
+            raise ValueError("mode must be 'min' or 'max'")
+        self.mode = mode
+        self.patience = int(patience)
+        self.min_delta = float(min_delta)
+        self.best = float("inf") if mode == "min" else -float("inf")
+        self.bad_epochs = 0
+
+    def update(self, value: float) -> EarlyStopDecision:
+        improved = value < self.best - self.min_delta if self.mode == "min" else value > self.best + self.min_delta
+        if improved:
+            self.best = value
+            self.bad_epochs = 0
+        else:
+            self.bad_epochs += 1
+        return EarlyStopDecision(improved=improved, should_stop=self.bad_epochs > self.patience)
+
+
 def set_seed(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)

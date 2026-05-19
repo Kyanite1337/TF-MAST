@@ -6,6 +6,7 @@ import torch
 from tfmast.config import load_config
 from tfmast.data.datasets import build_synthetic_loaders
 from tfmast.report import write_feedback
+from tfmast.training.common import EarlyStopper
 from tfmast.training.stage1_mae import train_mae
 from tfmast.training.stage2_tfc import train_tfc
 from tfmast.training.stage3_finetune import train_finetune
@@ -39,6 +40,7 @@ def test_three_stage_training_smoke_and_feedback_files(tmp_path):
     ft_result = train_finetune(
         cfg,
         loaders.train,
+        loaders.val,
         loaders.test,
         init_encoder=tfc_result.best_checkpoint,
         head_name="mlp",
@@ -67,3 +69,15 @@ def test_wandb_disabled_and_offline_modes_do_not_require_network(tmp_path, monke
     logger = WandbLogger(cfg, run_name="offline", stage="test")
     logger.log({"loss": 1.0}, step=1)
     logger.finish()
+
+
+def test_early_stopper_triggers_after_patience_without_improvement():
+    stopper = EarlyStopper(mode="min", patience=2, min_delta=0.01)
+
+    assert stopper.update(1.0).improved
+    assert not stopper.update(0.995).should_stop
+    assert not stopper.update(0.994).should_stop
+    decision = stopper.update(0.993)
+
+    assert decision.should_stop
+    assert stopper.best == 1.0

@@ -37,15 +37,16 @@ def run_pipeline(
     loaders = _loaders_for_pipeline(cfg, synthetic=synthetic, limit_subjects=limit_subjects)
 
     print("[Pipeline] Starting stage: MAE", flush=True)
-    mae = train_mae(cfg, loaders.mae, run_name=f"{experiment}_mae")
+    mae = train_mae(cfg, loaders.mae, loaders.mae_val, run_name=f"{experiment}_mae")
     print(f"[Pipeline] MAE best checkpoint: {mae.best_checkpoint}", flush=True)
     print("[Pipeline] Starting stage: TFC", flush=True)
-    tfc = train_tfc(cfg, loaders.tfc, init_encoder=mae.best_checkpoint, run_name=f"{experiment}_tfc")
+    tfc = train_tfc(cfg, loaders.tfc, loaders.tfc_val, init_encoder=mae.best_checkpoint, run_name=f"{experiment}_tfc")
     print(f"[Pipeline] TFC best checkpoint: {tfc.best_checkpoint}", flush=True)
     print("[Pipeline] Starting stage: fine-tune", flush=True)
     finetune = train_finetune(
         cfg,
         loaders.train,
+        loaders.val,
         loaders.test,
         init_encoder=tfc.best_checkpoint,
         head_name=head or cfg.head.name,

@@ -61,4 +61,8 @@ def test_pipeline_prints_stage_progress_for_long_runs(tmp_path, capsys):
     assert "[Pipeline] Starting stage: TFC" in output
     assert "[Pipeline] Starting stage: fine-tune" in output
     assert "step 1/" not in output
-    assert "time=" in output
+    assert "Time:" in output
+    assert "MAE Epoch" in output
+    assert "Train:" in output
+    assert "Val:" in output
+    assert "Saved best MAE" in output

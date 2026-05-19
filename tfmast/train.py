@@ -45,13 +45,13 @@ def _build_loaders(cfg, args):
 
 def _run_stage(stage, cfg, loaders, overrides):
     if stage == "mae":
-        return train_mae(cfg, loaders.mae, run_name=str(overrides.get("experiment", "mae")))
+        return train_mae(cfg, loaders.mae, loaders.mae_val, run_name=str(overrides.get("experiment", "mae")))
     if stage == "tfc":
         init = overrides.get("init")
-        return train_tfc(cfg, loaders.tfc, init_encoder=Path(init) if init else None, run_name=str(overrides.get("experiment", "tfc")))
+        return train_tfc(cfg, loaders.tfc, loaders.tfc_val, init_encoder=Path(init) if init else None, run_name=str(overrides.get("experiment", "tfc")))
     if stage == "finetune":
         init = overrides.get("init")
-        return train_finetune(cfg, loaders.train, loaders.test, init_encoder=Path(init) if init else None, head_name=str(overrides.get("head", cfg.head.name)), run_name=str(overrides.get("experiment", "finetune")))
+        return train_finetune(cfg, loaders.train, loaders.val, loaders.test, init_encoder=Path(init) if init else None, head_name=str(overrides.get("head", cfg.head.name)), run_name=str(overrides.get("experiment", "finetune")))
     raise ValueError(f"Unknown stage={stage}")
 
 
