@@ -2,8 +2,10 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import json
 
 from tfmast.config import load_config
+from tfmast.training.common import append_metrics
 from tfmast.data.datasets import build_synthetic_loaders
 from tfmast.report import write_feedback
 from tfmast.training.common import EarlyStopper
@@ -51,11 +53,39 @@ def test_three_stage_training_smoke_and_feedback_files(tmp_path):
     assert tfc_result.best_checkpoint.exists()
     assert ft_result.best_checkpoint.exists()
     assert "macro_f1" in ft_result.best_metrics
+    assert "test/macro_f1" in ft_result.best_metrics
+    assert (ft_result.run_dir / "test_metrics.json").exists()
 
     feedback = write_feedback(ft_result.run_dir, latest=True)
     assert feedback.exists()
     assert (Path(cfg.paths.runs_dir) / "latest_feedback.md").exists()
     assert (Path(cfg.paths.runs_dir) / "latest_metrics.json").exists()
+
+
+def test_feedback_includes_test_metrics_and_matrix_shape_warning(tmp_path):
+    run_dir = tmp_path / "runs" / "finetune_run"
+    run_dir.mkdir(parents=True)
+    append_metrics(run_dir, {
+        "epoch": 1,
+        "finetune/accuracy": 0.7,
+        "finetune/macro_f1": 0.6,
+        "confusion_matrix": [[8, 2], [1, 9]],
+    })
+    (run_dir / "test_metrics.json").write_text(json.dumps({
+        "test/accuracy": 0.65,
+        "test/macro_f1": 0.55,
+        "test/confusion_matrix": [[7, 3], [2, 8]],
+        "expected_num_classes": 53,
+    }), encoding="utf-8")
+
+    feedback = write_feedback(run_dir, latest=True)
+    text = feedback.read_text(encoding="utf-8")
+    latest = json.loads((run_dir.parent / "latest_metrics.json").read_text(encoding="utf-8"))
+
+    assert "## Test Metrics" in text
+    assert "test/macro_f1" in text
+    assert "expected `53 x 53`, got `2 x 2`" in text
+    assert latest["test_metrics"]["test/macro_f1"] == 0.55
 
 
 def test_wandb_disabled_and_offline_modes_do_not_require_network(tmp_path, monkeypatch):

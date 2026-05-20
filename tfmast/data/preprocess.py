@@ -13,6 +13,12 @@ from scipy import signal
 
 from tfmast.config import to_dict
 
+DB5_EXERCISE_LABEL_OFFSETS = {
+    "E1": 0,
+    "E2": 12,
+    "E3": 29,
+}
+
 
 @dataclass
 class RawRecord:
@@ -107,6 +113,12 @@ def _majority(values: np.ndarray) -> int:
     return int(Counter(values.tolist()).most_common(1)[0][0])
 
 
+def _global_db5_label(label: int, exercise: str) -> int:
+    if label == 0:
+        return 0
+    return int(label) + DB5_EXERCISE_LABEL_OFFSETS.get(str(exercise), 0)
+
+
 def _window_records(records: list[RawRecord], cfg: Any) -> tuple[np.ndarray, dict[str, np.ndarray]]:
     win = int(round(cfg.data.sampling_rate * cfg.data.window_ms / 1000))
     stride = int(round(cfg.data.sampling_rate * cfg.data.stride_ms / 1000))
@@ -129,6 +141,7 @@ def _window_records(records: list[RawRecord], cfg: Any) -> tuple[np.ndarray, dic
                 if non_rest.size == 0:
                     continue
                 label = _majority(non_rest)
+            label = _global_db5_label(label, record.exercise)
             rep = _majority(record.repetition[start:end])
             xs.append(emg[start:end].T)
             ys.append(label)

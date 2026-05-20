@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 
 import numpy as np
@@ -117,11 +118,27 @@ def train_finetune(cfg, train_loader, val_loader, test_loader=None, *, init_enco
         save_checkpoint(last_path, **payload)
         decision = stopper.update(val_loss)
         if decision.improved:
-            best_metrics = {"loss": val_loss, "accuracy": eval_metrics["accuracy"], "macro_f1": eval_metrics["macro_f1"]}
+            best_metrics = {"epoch": epoch, "loss": val_loss, "train_loss": train_loss, "accuracy": eval_metrics["accuracy"], "macro_f1": eval_metrics["macro_f1"]}
             save_checkpoint(best_path, **payload)
             print(f"  └── Saved best Classifier (loss: {val_loss:.4f})", flush=True)
         if decision.should_stop:
             print("  └── Classifier Early stopping triggered.", flush=True)
             break
+    if test_loader is not None and best_path.exists():
+        state = torch.load(best_path, map_location="cpu")
+        encoder.load_state_dict(state["encoder"])
+        head.load_state_dict(state["head"])
+        test_eval = evaluate(encoder, head, test_loader, device, criterion=criterion)
+        test_metrics = {
+            "test/loss": test_eval["loss"],
+            "test/accuracy": test_eval["accuracy"],
+            "test/macro_f1": test_eval["macro_f1"],
+            "test/confusion_matrix": test_eval["confusion_matrix"],
+            "expected_num_classes": 53 if cfg.data.class_mode == "53_with_rest" else 52,
+        }
+        (run_dir / "test_metrics.json").write_text(json.dumps(test_metrics, indent=2, ensure_ascii=False), encoding="utf-8")
+        logger.log({k: v for k, v in test_metrics.items() if k != "test/confusion_matrix"}, step=int(best_metrics.get("epoch", 0) or 0))
+        best_metrics.update({k: v for k, v in test_metrics.items() if k != "test/confusion_matrix"})
+        print(f"FT Test | Loss: {test_metrics['test/loss']:.4f} | Acc: {test_metrics['test/accuracy']:.4f} | F1: {test_metrics['test/macro_f1']:.4f}", flush=True)
     logger.finish()
     return TrainResult(run_dir=run_dir, best_checkpoint=best_path, last_checkpoint=last_path, best_metrics=best_metrics)

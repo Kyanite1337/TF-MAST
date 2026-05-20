@@ -8,7 +8,7 @@ from tfmast.config import load_config
 from tfmast.data.preprocess import build_preprocessed_dataset, load_one_mat
 
 
-def _write_db5_mat(root: Path, subject: int, exercise: int, samples: int = 240) -> Path:
+def _write_db5_mat(root: Path, subject: int, exercise: int, samples: int = 240, local_label: int | None = None) -> Path:
     subject_dir = root / f"s{subject}"
     subject_dir.mkdir(parents=True, exist_ok=True)
     path = subject_dir / f"S{subject}_E{exercise}_A1.mat"
@@ -18,7 +18,7 @@ def _write_db5_mat(root: Path, subject: int, exercise: int, samples: int = 240) 
     for rep in range(1, 7):
         start = (rep - 1) * (samples // 6)
         end = rep * (samples // 6)
-        restimulus[start:end] = ((rep + exercise) % 52) + 1
+        restimulus[start:end] = local_label if local_label is not None else ((rep + exercise) % 52) + 1
         repetition[start:end] = rep
     savemat(path, {"emg": emg, "restimulus": restimulus, "rerepetition": repetition})
     return path
@@ -59,6 +59,25 @@ def test_preprocess_splits_by_repetition_and_keeps_rest_class_when_configured(tm
     assert set(np.unique(dataset.repetition_test)).issubset({2, 5})
     assert dataset.num_classes == 53
     assert dataset.label_map[0] == 0
+
+
+def test_preprocess_maps_db5_exercise_local_labels_to_global_classes(tmp_path):
+    data_root = tmp_path / "data" / "ninapro_db5"
+    for exercise in [1, 2, 3]:
+        _write_db5_mat(data_root, subject=1, exercise=exercise, local_label=1)
+    cfg = load_config(overrides={
+        "data.root": str(data_root),
+        "data.subjects": [1],
+        "data.exercises": ["E1", "E2", "E3"],
+        "data.class_mode": "53_with_rest",
+        "preprocess.notch.enabled": False,
+        "preprocess.bandpass.enabled": False,
+    })
+
+    dataset = build_preprocessed_dataset(cfg, limit_subjects=1)
+
+    assert dataset.num_classes == 53
+    assert set(np.unique(dataset.y_train)) == {1, 13, 30}
 
 
 def test_preprocess_can_drop_rest_for_52_gesture_mode(tmp_path):
