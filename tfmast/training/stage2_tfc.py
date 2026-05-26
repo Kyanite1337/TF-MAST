@@ -10,11 +10,19 @@ from tfmast.training.common import EarlyStopper, TrainResult, append_metrics, gp
 from tfmast.utils.wandb import WandbLogger
 
 
-def _load_time_encoder(model: TFCModel, path) -> None:
+def _load_tfc_init(model: TFCModel, path) -> None:
     if path is None:
         return
     state = torch.load(path, map_location="cpu")
-    encoder_state = state.get("encoder", state.get("model", state))
+    if "model" in state:
+        current = model.state_dict()
+        compatible = {k: v for k, v in state["model"].items() if k in current and current[k].shape == v.shape}
+        skipped = sorted(k for k, v in state["model"].items() if k in current and current[k].shape != v.shape)
+        model.load_state_dict(compatible, strict=False)
+        if skipped:
+            print(f"[init] skipped shape-mismatched TFC weights: {', '.join(skipped)}", flush=True)
+        return
+    encoder_state = state.get("encoder", state)
     model.time_encoder.load_state_dict(encoder_state, strict=False)
 
 
@@ -38,7 +46,7 @@ def train_tfc(cfg, loader, val_loader=None, *, init_encoder=None, run_name: str 
     run_dir = make_run_dir(cfg, "tfc", run_name)
     logger = WandbLogger(cfg, run_name=run_name or "tfc", stage="tfc")
     model = TFCModel.from_config(cfg)
-    _load_time_encoder(model, init_encoder)
+    _load_tfc_init(model, init_encoder)
     model = model.to(device)
     opt = AdamW(model.parameters(), lr=float(cfg.train.tfc.lr), weight_decay=float(cfg.train.tfc.weight_decay))
     scaler = torch.amp.GradScaler("cuda", enabled=bool(cfg.train.amp and device.type == "cuda"))

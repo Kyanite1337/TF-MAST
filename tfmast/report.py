@@ -15,9 +15,14 @@ def _read_metrics(run_dir: Path) -> list[dict[str, Any]]:
     if not metrics_path.exists():
         return []
     rows = []
-    for line in metrics_path.read_text(encoding="utf-8").splitlines():
-        if line.strip():
+    for line in metrics_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = line.strip().strip("\x00")
+        if not line:
+            continue
+        try:
             rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
     return rows
 
 

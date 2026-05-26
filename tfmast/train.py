@@ -32,6 +32,12 @@ def _parse_override(items: list[str]) -> dict:
     return out
 
 
+def _normalize_overrides(overrides: dict) -> dict:
+    if "head" in overrides and "head.name" not in overrides:
+        overrides["head.name"] = overrides.pop("head")
+    return overrides
+
+
 def _is_oom(exc: RuntimeError) -> bool:
     return "out of memory" in str(exc).lower()
 
@@ -67,7 +73,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--limit-subjects", type=int, default=None)
     parser.add_argument("--max-batches", type=int, default=None)
     args = parser.parse_args(argv)
-    overrides = _parse_override(args.overrides)
+    overrides = _normalize_overrides(_parse_override(args.overrides))
     if args.max_batches is not None:
         overrides["train.max_batches"] = args.max_batches
     cfg = load_config(args.config, overrides=overrides)

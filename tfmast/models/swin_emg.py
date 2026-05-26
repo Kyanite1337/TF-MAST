@@ -47,7 +47,7 @@ class SwinEMGEncoder(nn.Module):
             layers.append(layer)
         self.blocks = nn.ModuleList(layers)
         self.norm = nn.LayerNorm(embed_dim)
-        self.bypass_proj = nn.Linear(self.num_tokens, embed_dim)
+        self.bypass_proj = nn.Linear(embed_dim, embed_dim)
         nn.init.trunc_normal_(self.pos_embed, std=0.02)
 
     @classmethod
@@ -82,6 +82,6 @@ class SwinEMGEncoder(nn.Module):
         if return_tokens:
             outputs.append(tokens)
         if return_bypass:
-            bypass_seed = raw_tokens.mean(dim=-1)
+            bypass_seed = raw_tokens.mean(dim=1)
             outputs.append(self.bypass_proj(bypass_seed))
         return tuple(outputs) if len(outputs) > 1 else pooled

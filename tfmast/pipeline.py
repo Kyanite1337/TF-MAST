@@ -8,7 +8,7 @@ from tfmast.config import load_config
 from tfmast.data.datasets import build_loaders, build_synthetic_loaders
 from tfmast.data.preprocess import build_preprocessed_dataset
 from tfmast.report import write_feedback
-from tfmast.train import _parse_override
+from tfmast.train import _normalize_overrides, _parse_override
 from tfmast.training.common import TrainResult
 from tfmast.training.stage1_mae import train_mae
 from tfmast.training.stage2_tfc import train_tfc
@@ -66,7 +66,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--head", default=None)
     parser.add_argument("--max-batches", type=int, default=None)
     args = parser.parse_args(argv)
-    overrides = _parse_override(args.overrides)
+    overrides = _normalize_overrides(_parse_override(args.overrides))
     if args.max_batches is not None:
         overrides["train.max_batches"] = args.max_batches
     result = run_pipeline(

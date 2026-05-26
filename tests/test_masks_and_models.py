@@ -110,7 +110,35 @@ def test_classifier_heads_forward_for_mlp_and_skip_mamba_when_unavailable():
     assert mlp(tokens=tokens, pooled=pooled, bypass=bypass).shape == (3, 53)
 
     pytest.importorskip("mamba_ssm")
-    mamba = build_head("mamba", embed_dim=32, num_classes=53, bypass=True)
-    bimamba = build_head("bimamba", embed_dim=32, num_classes=53, bypass=True)
+    if not torch.cuda.is_available():
+        pytest.skip("mamba_ssm forward requires CUDA kernels")
+
+    device = torch.device("cuda")
+    tokens = tokens.to(device)
+    pooled = pooled.to(device)
+    bypass = bypass.to(device)
+    mamba = build_head("mamba", embed_dim=32, num_classes=53, bypass=True).to(device)
+    bimamba = build_head("bimamba", embed_dim=32, num_classes=53, bypass=True).to(device)
     assert mamba(tokens=tokens, pooled=pooled, bypass=bypass).shape == (3, 53)
     assert bimamba(tokens=tokens, pooled=pooled, bypass=bypass).shape == (3, 53)
+
+
+def test_mlp_raw_bypass_fuses_preprocessed_raw_signal_before_classification():
+    tokens = torch.randn(3, 160, 32)
+    pooled = tokens.mean(dim=1)
+    raw_a = torch.zeros(3, 16, 40)
+    raw_b = torch.ones(3, 16, 40)
+
+    head = build_head("mlp", embed_dim=32, num_classes=53, bypass=True)
+    head.eval()
+    without_raw_change = head(tokens=tokens, pooled=pooled, raw=raw_a)
+    with_raw_change = head(tokens=tokens, pooled=pooled, raw=raw_b)
+
+    assert not torch.allclose(without_raw_change, with_raw_change)
+
+    disabled = build_head("mlp", embed_dim=32, num_classes=53, bypass=False)
+    disabled.eval()
+    disabled_a = disabled(tokens=tokens, pooled=pooled, raw=raw_a)
+    disabled_b = disabled(tokens=tokens, pooled=pooled, raw=raw_b)
+
+    assert torch.allclose(disabled_a, disabled_b)

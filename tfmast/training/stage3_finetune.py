@@ -15,12 +15,60 @@ from tfmast.training.common import EarlyStopper, TrainResult, append_metrics, gp
 from tfmast.utils.wandb import WandbLogger
 
 
+class FocalLoss(nn.Module):
+    def __init__(self, *, weight=None, gamma: float = 2.0, label_smoothing: float = 0.0):
+        super().__init__()
+        self.weight = weight
+        self.gamma = float(gamma)
+        self.label_smoothing = float(label_smoothing)
+
+    def forward(self, logits, target):
+        ce = nn.functional.cross_entropy(
+            logits,
+            target,
+            weight=self.weight,
+            label_smoothing=self.label_smoothing,
+            reduction="none",
+        )
+        pt = torch.exp(-ce)
+        return ((1.0 - pt) ** self.gamma * ce).mean()
+
+
 def _load_encoder(encoder: SwinEMGEncoder, path) -> None:
     if path is None:
         return
     state = torch.load(path, map_location="cpu")
     encoder_state = state.get("encoder", state.get("model", state))
-    encoder.load_state_dict(encoder_state, strict=False)
+    current = encoder.state_dict()
+    compatible = {k: v for k, v in encoder_state.items() if k in current and current[k].shape == v.shape}
+    skipped = sorted(k for k, v in encoder_state.items() if k in current and current[k].shape != v.shape)
+    encoder.load_state_dict(compatible, strict=False)
+    if skipped:
+        print(f"[init] skipped shape-mismatched encoder weights: {', '.join(skipped)}", flush=True)
+
+
+def _class_weights(train_loader, num_classes: int, device) -> torch.Tensor | None:
+    y = getattr(train_loader.dataset, "y", None)
+    if y is None:
+        return None
+    labels = y.detach().cpu().numpy() if isinstance(y, torch.Tensor) else np.asarray(y)
+    counts = np.bincount(labels.astype(np.int64), minlength=num_classes).astype(np.float64)
+    counts[counts == 0] = 1.0
+    weights = counts.sum() / (num_classes * counts)
+    weights = weights / weights.mean()
+    return torch.as_tensor(weights, dtype=torch.float32, device=device)
+
+
+def _build_criterion(cfg, train_loader, num_classes: int, device):
+    class_weight_mode = str(getattr(cfg.train.finetune, "class_weight", "none")).lower()
+    weight = _class_weights(train_loader, num_classes, device) if class_weight_mode in {"balanced", "inverse"} else None
+    label_smoothing = float(cfg.train.finetune.label_smoothing)
+    loss_name = str(getattr(cfg.train.finetune, "loss", "cross_entropy")).lower()
+    if loss_name == "focal":
+        return FocalLoss(weight=weight, gamma=float(cfg.train.finetune.focal_gamma), label_smoothing=label_smoothing)
+    if loss_name in {"cross_entropy", "ce"}:
+        return nn.CrossEntropyLoss(weight=weight, label_smoothing=label_smoothing)
+    raise ValueError(f"Unknown finetune loss: {loss_name}")
 
 
 @torch.no_grad()
@@ -33,7 +81,7 @@ def evaluate(encoder, head, loader, device, criterion=None):
     for x, y in loader:
         x, y_device = x.to(device), y.to(device)
         pooled, tokens, bypass = encoder(x, return_tokens=True, return_bypass=True)
-        logits = head(tokens=tokens, pooled=pooled, bypass=bypass)
+        logits = head(tokens=tokens, pooled=pooled, bypass=bypass, raw=x)
         if criterion is not None:
             total_loss += float(criterion(logits, y_device).detach().cpu())
             steps += 1
@@ -57,19 +105,21 @@ def train_finetune(cfg, train_loader, val_loader, test_loader=None, *, init_enco
     encoder = SwinEMGEncoder.from_config(cfg)
     _load_encoder(encoder, init_encoder)
     head_name = head_name or cfg.head.name
+    num_classes = 53 if cfg.data.class_mode == "53_with_rest" else 52
     head = build_head(
         head_name,
         embed_dim=int(cfg.model.embed_dim),
-        num_classes=53 if cfg.data.class_mode == "53_with_rest" else 52,
+        num_classes=num_classes,
         dropout=float(cfg.head.dropout),
         bypass=bool(cfg.head.bypass),
+        patch_size=tuple(cfg.model.patch_size),
         d_state=int(cfg.head.mamba_d_state),
         d_conv=int(cfg.head.mamba_d_conv),
         expand=int(cfg.head.mamba_expand),
     )
     encoder, head = encoder.to(device), head.to(device)
     opt = AdamW(list(encoder.parameters()) + list(head.parameters()), lr=float(cfg.train.finetune.lr), weight_decay=float(cfg.train.finetune.weight_decay))
-    criterion = nn.CrossEntropyLoss(label_smoothing=float(cfg.train.finetune.label_smoothing))
+    criterion = _build_criterion(cfg, train_loader, num_classes, device)
     scaler = torch.amp.GradScaler("cuda", enabled=bool(cfg.train.amp and device.type == "cuda"))
     stopper = EarlyStopper(mode="min", patience=int(cfg.train.finetune.early_stop_patience), min_delta=float(cfg.train.finetune.early_stop_min_delta))
     best_metrics = {}
@@ -89,7 +139,7 @@ def train_finetune(cfg, train_loader, val_loader, test_loader=None, *, init_enco
             x, y = x.to(device), y.to(device)
             with torch.amp.autocast(device_type=device.type, enabled=bool(cfg.train.amp and device.type == "cuda")):
                 pooled, tokens, bypass = encoder(x, return_tokens=True, return_bypass=True)
-                logits = head(tokens=tokens, pooled=pooled, bypass=bypass)
+                logits = head(tokens=tokens, pooled=pooled, bypass=bypass, raw=x)
                 loss = criterion(logits, y)
                 scaled_loss = loss / accum
             scaler.scale(scaled_loss).backward()
